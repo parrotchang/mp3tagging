@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mp3 標籤校正</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+/* Layout: file rail on the left, tag workbench on the right; stacks on phones.
+   Palette: cool green-grey neutrals, one teal accent, amber only marks "changed". */
+:root {
+  --bg: #f1f3f1;
+  --surface: #fafbfa;
+  --sunken: #e8ece9;
+  --ink: #1b2421;
+  --muted: #5d6a65;
+  --line: #d3dad6;
+  --accent: #0e6b5b;
+  --accent-ink: #ffffff;
+  --accent-soft: #d9ece6;
+  --changed: #a8500d;
+  --changed-soft: #f7e6d6;
+  --danger: #b3261e;
+  --font-display: "Bricolage Grotesque", "Noto Sans TC", system-ui, sans-serif;
+  --font-body: "Noto Sans TC", system-ui, -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101513;
+    --surface: #18201d;
+    --sunken: #0d1210;
+    --ink: #e5ebe8;
+    --muted: #92a19a;
+    --line: #2a352f;
+    --accent: #5fcdb2;
+    --accent-ink: #08211b;
+    --accent-soft: #1d3a32;
+    --changed: #f0a35e;
+    --changed-soft: #3a2a1a;
+    --danger: #ff8f86;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 15px/1.6 var(--font-body);
+  padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 48px;
+}
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.wrap { max-width: 1180px; margin-inline: auto; }
+
+/* header */
+.top { padding-block: 28px 20px; display: flex; flex-wrap: wrap; gap: 6px 24px; align-items: baseline; justify-content: space-between; }
+.top h1 { margin: 0; font: 700 28px/1.2 var(--font-display); letter-spacing: -0.01em; }
+.top p { margin: 0; color: var(--muted); font-size: 13.5px; max-width: 56ch; }
+
+/* app grid */
+.app { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+@media (min-width: 900px) { .app { grid-template-columns: 320px minmax(0, 1fr); } .rail { position: sticky; top: 16px; } }
+
+.rail { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.drop {
+  display: block; cursor: pointer; text-align: center; padding: 22px 16px;
+  border: 1.5px dashed var(--line); border-radius: 10px; background: var(--surface);
+  font-weight: 500; transition: border-color .15s, background .15s;
+}
+.drop span { display: block; color: var(--muted); font-weight: 400; font-size: 13px; margin-top: 2px; }
+.drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 46vh; overflow-y: auto; min-width: 0; }
+@media (min-width: 900px) { .list { max-height: calc(100vh - 360px); min-height: 80px; } }
+.item {
+  display: grid; grid-template-columns: 40px minmax(0, 1fr) auto auto; gap: 10px; align-items: center;
+  padding: 6px 6px 6px 8px; border-radius: 8px; cursor: pointer; border: 1px solid transparent;
+}
+.item:hover { background: var(--surface); }
+.item.sel { background: var(--surface); border-color: var(--line); box-shadow: inset 3px 0 0 var(--accent); }
+.thumb { width: 40px; height: 40px; border-radius: 4px; object-fit: cover; background: var(--sunken); display: block; }
+.thumb.empty { background: radial-gradient(circle at 50% 50%, var(--line) 0 6px, transparent 7px), radial-gradient(circle at 50% 50%, var(--sunken) 0 17px, var(--line) 18px 19px, var(--sunken) 20px); }
+.txt { min-width: 0; line-height: 1.35; }
+.txt b { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.txt span { display: block; color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip { font-size: 11.5px; padding: 1px 8px; border-radius: 99px; background: var(--sunken); color: var(--muted); white-space: nowrap; }
+.chip.dirty { background: var(--changed-soft); color: var(--changed); }
+.chip.done { background: var(--accent-soft); color: var(--accent); }
+.x { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1; padding: 4px 6px; border-radius: 6px; }
+.x:hover { color: var(--danger); background: var(--sunken); }
+
+.opts { display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; color: var(--muted); }
+.opts label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+.opts input { margin-top: 5px; accent-color: var(--accent); }
+
+/* buttons */
+.btn { border: 1px solid var(--line); background: var(--surface); padding: 8px 16px; border-radius: 8px; cursor: pointer; font-weight: 500; }
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btn.sm { padding: 4px 12px; font-size: 13px; }
+
+/* workbench */
+.bench { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; min-width: 0; }
+.panel h3 { margin: 0 0 14px; font: 700 15px/1.3 var(--font-display); letter-spacing: .02em; }
+.filehead h2 { margin: 0; font: 600 18px/1.3 var(--font-body); overflow-wrap: anywhere; }
+.filehead .meta { margin: 2px 0 0; color: var(--muted); font: 400 12.5px var(--font-mono); }
+
+.tagform { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 640px) { .tagform { grid-template-columns: 168px minmax(0, 1fr); } }
+.cover img, .cover .ph { width: 168px; max-width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; background: var(--sunken); display: block; }
+.cover .ph { display: grid; place-items: center; color: var(--muted); font-size: 13px; border: 1px dashed var(--line); }
+.cover .cmeta { font: 400 12px var(--font-mono); color: var(--muted); margin: 6px 0; min-height: 18px; }
+.cover .cbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.fields { display: grid; gap: 12px 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fields .field.wide { grid-column: 1 / -1; }
+@media (max-width: 480px) { .fields { grid-template-columns: minmax(0, 1fr); } }
+.field label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 3px; letter-spacing: .04em; }
+.field input, .field select {
+  width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--bg); font-family: var(--font-body);
+}
+.fields .field input { font-size: 14.5px; }
+.field.changed input { border-color: var(--changed); background: var(--changed-soft); }
+.field .was { font-size: 12px; color: var(--changed); margin-top: 3px; overflow-wrap: anywhere; }
+
+details.moji { margin-top: 14px; font-size: 13.5px; color: var(--muted); }
+details.moji summary { cursor: pointer; }
+details.moji .mrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); }
+
+/* search */
+.srow { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 640px) { .srow { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.sctrl { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg label { padding: 7px 14px; cursor: pointer; font-size: 13.5px; background: var(--bg); }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg input:checked + span { color: var(--accent-ink); }
+.seg label:has(input:checked) { background: var(--accent); color: var(--accent-ink); }
+.seg label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sctrl select { width: auto; padding: 7px 10px; }
+.sctrl .btn { margin-left: auto; }
+.status { margin: 12px 0 0; font-size: 13.5px; color: var(--muted); min-height: 22px; }
+.status.err { color: var(--danger); }
+
+.results { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; }
+.res { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.res:first-child { border-top: 0; }
+.res img { width: 52px; height: 52px; border-radius: 4px; object-fit: cover; background: var(--sunken); }
+.res .t { min-width: 0; line-height: 1.4; }
+.res .t b { font-weight: 500; display: block; overflow-wrap: anywhere; }
+.res .t span { display: block; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.res .t .src { font: 400 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
+.rbtns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 480px) { .res { grid-template-columns: 52px minmax(0, 1fr); } .rbtns { grid-column: 2; justify-content: flex-start; } }
+
+/* album batch panel */
+.alb { border-color: var(--accent); }
+.alb h3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.albhead { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 14px; align-items: center; margin-bottom: 14px; }
+.albhead img, .albhead .ph { width: 64px; height: 64px; border-radius: 4px; object-fit: cover; background: var(--sunken); display: block; }
+.albhead b { display: block; font-weight: 700; overflow-wrap: anywhere; }
+.albhead span { display: block; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.albopt { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; margin-bottom: 12px; cursor: pointer; }
+.albopt input { margin-top: 5px; accent-color: var(--accent); }
+.albrows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.albrow { display: grid; gap: 4px 12px; grid-template-columns: minmax(0, 1fr); padding-top: 8px; border-top: 1px solid var(--line); }
+@media (min-width: 640px) { .albrow { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); align-items: center; } }
+.albrow .fn { font-size: 13.5px; overflow-wrap: anywhere; }
+.albrow select { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); }
+.albrow select:disabled { opacity: .5; }
+.albrow.miss select { border-color: var(--changed); }
+
+.actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+
+/* empty state */
+.empty-state { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 28px; }
+.empty-state h2 { margin: 0 0 12px; font: 700 20px/1.3 var(--font-display); }
+.empty-state ol { margin: 0; padding-left: 1.3em; display: flex; flex-direction: column; gap: 8px; }
+.empty-state p { margin: 14px 0 0; color: var(--muted); font-size: 13.5px; max-width: 62ch; }
+
+.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); max-width: min(92vw, 520px); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: 13.5px; z-index: 5; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="wrap top">
+  <h1>mp3 標籤校正</h1>
+  <p>檔案只在你的瀏覽器裡處理，不會上傳。只有你輸入的歌名與歌手，會送到 iTunes 或 MusicBrainz 搜尋。</p>
+</header>
+
+<main class="wrap app">
+  <aside class="rail">
+    <label class="drop" id="drop" for="pick">拖曳 mp3 到這裡<span>或點此選擇檔案，可一次多選</span></label>
+    <input type="file" id="pick" accept=".mp3,audio/mpeg" multiple hidden>
+    <ul class="list" id="list" aria-label="已加入的檔案"></ul>
+    <div class="opts">
+      <label><input type="checkbox" id="stripV1" checked><span>同時移除舊版 ID3v1 標籤，避免舊資料蓋過新標籤</span></label>
+      <label><input type="checkbox" id="rename"><span>下載時把檔名改成「歌手 - 歌名.mp3」</span></label>
+    </div>
+    <button class="btn" id="dlAll" disabled>下載全部已修改的檔案</button>
+  </aside>
+
+  <section class="bench" id="bench" aria-live="polite"></section>
+</main>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+/*__ID3__*/
+</script>
+<script>
+/*__SOURCES__*/
+</script>
+<script>
+(function () {
+  'use strict';
+  var FIELDS = [
+    ['title', '歌名', 'wide'], ['artist', '歌手', ''], ['album', '專輯', ''], ['albumArtist', '專輯歌手', ''],
+    ['year', '年份', ''], ['track', '曲號', ''], ['genre', '類型', '']
+  ];
+  var COUNTRIES = [['TW', '台灣'], ['US', '美國'], ['JP', '日本'], ['HK', '香港'], ['KR', '韓國'], ['CN', '中國']];
+
+  var state = { files: [], sel: null, source: 'itunes', country: 'TW', album: null };
+  var uid = 0;
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var listEl = $('#list'), benchEl = $('#bench'), dlAllBtn = $('#dlAll');
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function fmtSize(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+  function cur() { return state.files.filter(function (f) { return f.id === state.sel; })[0]; }
+
+  var toastTimer;
+  function toast(msg) {
+    var t = $('#toast');
+    t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.hidden = true; }, 4500);
+  }
+
+  function coverURL(c) {
+    if (!c) return '';
+    if (!c._url) c._url = URL.createObjectURL(new Blob([c.data], { type: c.mime }));
+    return c._url;
+  }
+  function isDirty(f) {
+    return f.edit.cover !== f.orig.cover || FIELDS.some(function (x) { return f.edit[x[0]] !== f.orig[x[0]]; });
+  }
+
+  /* ---------- file list ---------- */
+  function renderList() {
+    listEl.innerHTML = state.files.map(function (f) {
+      var dirty = isDirty(f);
+      var chip = f.downloaded && !dirty ? '<span class="chip done">已下載</span>' : dirty ? '<span class="chip dirty">已修改</span>' : '<span class="chip">未修改</span>';
+      var th = f.edit.cover ? '<img class="thumb" alt="" src="' + coverURL(f.edit.cover) + '">' : '<div class="thumb empty"></div>';
+      return '<li class="item' + (f.id === state.sel ? ' sel' : '') + '" data-id="' + f.id + '" tabindex="0">' + th +
+        '<div class="txt"><b>' + esc(f.edit.title || f.file.name) + '</b><span>' + esc(f.edit.artist || f.file.name) + '</span></div>' +
+        chip + '<button class="x" data-rm="' + f.id + '" aria-label="移除 ' + esc(f.file.name) + '">×</button></li>';
+    }).join('');
+    dlAllBtn.disabled = !state.files.some(function (f) { return isDirty(f) && !f.downloaded; });
+  }
+  function refreshChip(f) {
+    var li = listEl.querySelector('[data-id="' + f.id + '"]');
+    if (!li) return;
+    var dirty = isDirty(f);
+    li.querySelector('.txt b').textContent = f.edit.title || f.file.name;
+    li.querySelector('.txt span').textContent = f.edit.artist || f.file.name;
+    var chip = li.querySelector('.chip');
+    chip.className = 'chip' + (dirty ? ' dirty' : '');
+    chip.textContent = dirty ? '已修改' : '未修改';
+    dlAllBtn.disabled = !state.files.some(function (x) { return isDirty(x) && !x.downloaded; });
+  }
+
+  listEl.addEventListener('click', function (e) {
+    var rm = e.target.closest('[data-rm]');
+    if (rm) {
+      var id = +rm.dataset.rm;
+      state.files = state.files.filter(function (f) { return f.id !== id; });
+      if (state.sel === id) state.sel = state.files.length ? state.files[0].id : null;
+      renderList(); renderBench();
+      return;
+    }
+    var li = e.target.closest('.item');
+    if (li) select(+li.dataset.id);
+  });
+  listEl.addEventListener('keydown', function (e) {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('item')) { e.preventDefault(); select(+e.target.dataset.id); }
+  });
+  function select(id) { state.sel = id; renderList(); renderBench(); }
+
+  /* ---------- adding files ---------- */
+  async function addFiles(list) {
+    var all = Array.prototype.slice.call(list);
+    var mp3s = all.filter(function (x) { return /\.mp3$/i.test(x.name) || x.type === 'audio/mpeg'; });
+    if (all.length !== mp3s.length) toast('已略過 ' + (all.length - mp3s.length) + ' 個非 mp3 檔案（這個版本只支援 mp3）');
+    var firstNew = null;
+    for (var i = 0; i < mp3s.length; i++) {
+      var file = mp3s[i];
+      try {
+        var head = new Uint8Array(await file.slice(0, 10).arrayBuffer());
+        var n = ID3.tagLength(head);
+        var buf = n ? new Uint8Array(await file.slice(0, Math.min(file.size, n)).arrayBuffer()) : head;
+        var res = ID3.parse(buf);
+        var rf = ID3.readFields(res);
+        var guess = Sources.guessFromName(file.name);
+        var f = {
+          id: ++uid, file: file, hasTag: res.hasTag, version: res.version,
+          orig: rf.fields, raw: rf.raw, edit: Object.assign({}, rf.fields),
+          q: { title: rf.fields.title || guess.title, artist: rf.fields.artist || guess.artist, album: rf.fields.album || '' },
+          results: [], status: '', statusErr: false, downloaded: false
+        };
+        state.files.push(f);
+        if (!firstNew) firstNew = f.id;
+      } catch (err) {
+        toast('無法讀取 ' + file.name + '：' + err.message);
+      }
+    }
+    if (firstNew) { state.sel = firstNew; renderList(); renderBench(); }
+  }
+
+  $('#pick').addEventListener('change', function (e) { addFiles(e.target.files); e.target.value = ''; });
+  var drop = $('#drop');
+  ['dragenter', 'dragover'].forEach(function (t) {
+    document.addEventListener(t, function (e) { e.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (t) {
+    document.addEventListener(t, function (e) { e.preventDefault(); if (t === 'drop' || e.target === document.documentElement) drop.classList.remove('over'); });
+  });
+  document.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+
+  /* ---------- workbench ---------- */
+  var EMPTY = '<div class="empty-state"><h2>三步修正標籤</h2><ol>' +
+    '<li>把 mp3 拖進左邊的框，可以一次放很多首。</li>' +
+    '<li>確認歌名、歌手，需要時再填專輯名稱縮小範圍（沒有標籤時會從檔名猜，例如「周杰倫 - 晴天.mp3」），按搜尋，從結果挑出正確的版本。</li>' +
+    '<li>檢查橘色標示的修改處，下載修正後的檔案。原始檔案不會被改動。</li></ol>' +
+    '<p>同一張專輯的歌：一次拉進所有檔案，搜尋後按結果旁的「整張專輯」，工具會把曲目表自動配對到每個檔案，你確認後一次套用。</p>' +
+    '<p>搜尋來源是 iTunes（封面品質好、有類型）和 MusicBrainz（社群資料庫、版本很多）。同一首歌在兩邊結果不同時，兩個都試試看。</p></div>';
+
+  function fieldHTML(f, x) {
+    var k = x[0], changed = f.edit[k] !== f.orig[k];
+    var extra = k === 'year' ? ' inputmode="numeric" maxlength="4" placeholder="2016"' : k === 'track' ? ' placeholder="3/12"' : '';
+    return '<div class="field' + (x[2] ? ' ' + x[2] : '') + (changed ? ' changed' : '') + '" data-field="' + k + '">' +
+      '<label for="f-' + k + '">' + x[1] + '</label><input id="f-' + k + '" data-k="' + k + '" value="' + esc(f.edit[k]) + '" autocomplete="off"' + extra + '>' +
+      '<div class="was"' + (changed ? '' : ' hidden') + '>原：' + esc(f.orig[k] || '（空）') + '</div></div>';
+  }
+
+  function renderBench() {
+    var f = cur();
+    if (!f) { benchEl.innerHTML = EMPTY; return; }
+    var tagLabel = f.hasTag ? 'ID3v2.' + f.version : '沒有 ID3v2 標籤';
+    var coverHTML = f.edit.cover
+      ? '<img id="coverImg" alt="目前封面" src="' + coverURL(f.edit.cover) + '">'
+      : '<div class="ph">沒有封面</div>';
+    var coverChanged = f.edit.cover !== f.orig.cover;
+    var countryOpts = COUNTRIES.map(function (c) { return '<option value="' + c[0] + '"' + (c[0] === state.country ? ' selected' : '') + '>' + c[1] + '</option>'; }).join('');
+
+    benchEl.innerHTML =
+      '<div class="filehead"><h2>' + esc(f.file.name) + '</h2><p class="meta">' + fmtSize(f.file.size) + ' · ' + tagLabel + '</p></div>' +
+      '<div class="panel"><h3>標籤內容</h3><div class="tagform">' +
+        '<div class="cover">' + coverHTML + '<div class="cmeta" id="cmeta"></div><div class="cbtns">' +
+          (f.edit.cover ? '<button class="btn sm" data-act="rmcover">移除封面</button>' : '') +
+          (coverChanged ? '<button class="btn sm" data-act="undocover">還原封面</button>' : '') + '</div></div>' +
+        '<div><div class="fields">' + FIELDS.map(function (x) { return fieldHTML(f, x); }).join('') + '</div>' +
+        '<details class="moji"><summary>標籤顯示成亂碼？</summary><div class="mrow">' +
+          '<span>舊檔常把中文存成 Big5 或 GBK，選對編碼就能還原：</span>' +
+          '<select id="mojiEnc" aria-label="原本的編碼"><option value="big5">Big5（繁體）</option><option value="gbk">GBK（簡體）</option><option value="shift_jis">Shift_JIS（日文）</option></select>' +
+          '<button class="btn sm" data-act="repair">修復</button></div></details></div>' +
+      '</div></div>' +
+      '<div class="panel"><h3>搜尋線上資料庫</h3>' +
+        '<form id="sform" autocomplete="off"><div class="srow">' +
+          '<div class="field"><label for="qTitle">歌名</label><input id="qTitle" value="' + esc(f.q.title) + '"></div>' +
+          '<div class="field"><label for="qArtist">歌手</label><input id="qArtist" value="' + esc(f.q.artist) + '"></div>' +
+          '<div class="field"><label for="qAlbum">專輯（選填）</label><input id="qAlbum" value="' + esc(f.q.album) + '"></div></div>' +
+          '<div class="sctrl"><div class="seg" role="radiogroup" aria-label="搜尋來源">' +
+            '<label><input type="radio" name="src" value="itunes"' + (state.source === 'itunes' ? ' checked' : '') + '><span>iTunes</span></label>' +
+            '<label><input type="radio" name="src" value="mb"' + (state.source === 'mb' ? ' checked' : '') + '><span>MusicBrainz</span></label></div>' +
+            '<select id="country" aria-label="iTunes 商店地區"' + (state.source === 'itunes' ? '' : ' hidden') + '>' + countryOpts + '</select>' +
+            '<button class="btn primary" type="submit">搜尋</button></div></form>' +
+        '<p class="status' + (f.statusErr ? ' err' : '') + '" id="status">' + esc(f.status) + '</p>' +
+        '<ul class="results" id="results"></ul></div>' +
+      '<div id="albumPanel"></div>' +
+      '<div class="actions"><button class="btn" data-act="reset">還原原本標籤</button>' +
+        '<button class="btn primary" data-act="download">下載修正後的檔案</button></div>';
+
+    renderResults(f);
+    renderAlbum();
+    var im = $('#coverImg');
+    if (im) im.addEventListener('load', function () {
+      $('#cmeta').textContent = im.naturalWidth + ' × ' + im.naturalHeight + ' · ' + fmtSize(f.edit.cover.data.length);
+    });
+  }
+
+  function renderResults(f) {
+    var ul = $('#results');
+    if (!ul) return;
+    ul.innerHTML = f.results.map(function (r, i) {
+      var sub = [r.album, r.year, r.track && '曲 ' + r.track, r.genre].filter(Boolean).join(' · ');
+      return '<li class="res"><img loading="lazy" alt="" src="' + esc(r.thumb) + '" onerror="this.style.visibility=\'hidden\'">' +
+        '<div class="t"><b>' + esc(r.title) + '</b><span>' + esc(r.artist) + '</span><span>' + esc(sub) + '</span><span class="src">' + esc(r.source) + '</span></div>' +
+        '<div class="rbtns"><button class="btn sm" data-apply="' + i + '">套用</button>' +
+        (state.files.length > 1 && (r.collectionId || r.releaseId) ? '<button class="btn sm" data-album="' + i + '" title="把這張專輯套用到所有已加入的檔案">整張專輯</button>' : '') + '</div></li>';
+    }).join('');
+  }
+  function setStatus(f, msg, err) {
+    f.status = msg; f.statusErr = !!err;
+    var s = $('#status');
+    if (s && cur() === f) { s.textContent = msg; s.className = 'status' + (err ? ' err' : ''); }
+  }
+
+  /* ---------- bench events ---------- */
+  benchEl.addEventListener('input', function (e) {
+    var f = cur();
+    if (!f) return;
+    var k = e.target.dataset && e.target.dataset.k;
+    if (k) {
+      f.edit[k] = e.target.value;
+      var box = e.target.closest('.field'), changed = f.edit[k] !== f.orig[k];
+      box.classList.toggle('changed', changed);
+      box.querySelector('.was').hidden = !changed;
+      refreshChip(f);
+    } else if (e.target.id === 'qTitle') f.q.title = e.target.value;
+    else if (e.target.id === 'qArtist') f.q.artist = e.target.value;
+    else if (e.target.id === 'qAlbum') f.q.album = e.target.value;
+  });
+  benchEl.addEventListener('change', function (e) {
+    if (e.target.name === 'src') {
+      state.source = e.target.value;
+      $('#country').hidden = state.source !== 'itunes';
+    } else if (e.target.id === 'country') state.country = e.target.value;
+    else if (e.target.id === 'albOverwrite' && state.album) { state.album.overwrite = e.target.checked; renderAlbum(); }
+    else if (e.target.dataset && e.target.dataset.m && state.album) { state.album.map[e.target.dataset.m] = +e.target.value; renderAlbum(); }
+  });
+  benchEl.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var f = cur();
+    if (f) runSearch(f);
+  });
+  benchEl.addEventListener('click', function (e) {
+    var f = cur();
+    if (!f) return;
+    var ap = e.target.closest('[data-apply]');
+    if (ap) { applyResult(f, f.results[+ap.dataset.apply], ap); return; }
+    var al = e.target.closest('[data-album]');
+    if (al) { openAlbum(f.results[+al.dataset.album], al); return; }
+    var act = e.target.closest('[data-act]');
+    if (!act) return;
+    var a = act.dataset.act;
+    if (a === 'rmcover') { f.edit.cover = null; renderList(); renderBench(); }
+    else if (a === 'undocover') { f.edit.cover = f.orig.cover; renderList(); renderBench(); }
+    else if (a === 'reset') { f.edit = Object.assign({}, f.orig); f.downloaded = false; renderList(); renderBench(); }
+    else if (a === 'repair') repair(f, $('#mojiEnc').value);
+    else if (a === 'download') download(f, act);
+    else if (a === 'albApply') applyAlbum(act);
+    else if (a === 'albClose') { state.album = null; renderAlbum(); }
+  });
+
+  function repair(f, enc) {
+    var n = 0;
+    Object.keys(f.raw).forEach(function (k) {
+      try {
+        var s = new TextDecoder(enc).decode(f.raw[k]);
+        if (s && s.indexOf('�') < 0) { f.edit[k] = s; n++; }
+      } catch (err) { /* encoding not supported by this browser */ }
+    });
+    if (!n) { toast(Object.keys(f.raw).length ? '用這個編碼無法還原，換一個編碼試試' : '這個檔案的標籤已經是 Unicode，不需要修復'); return; }
+    renderList(); renderBench();
+    toast('已用 ' + enc.toUpperCase() + ' 重新解讀 ' + n + ' 個欄位');
+  }
+
+  /* ---------- search ---------- */
+  var mbChain = Promise.resolve(), mbLast = 0;
+  function mbFetch(url) {
+    var run = async function () {
+      var wait = Math.max(0, mbLast + 1100 - Date.now());
+      if (wait) await sleep(wait);
+      mbLast = Date.now();
+      return fetch(url);
+    };
+    var p = mbChain.then(run, run);
+    mbChain = p.catch(function () {});
+    return p;
+  }
+  // iTunes is queried with JSONP (its documented callback parameter), which is not subject to CORS.
+  function jsonp(url, timeout) {
+    return new Promise(function (resolve, reject) {
+      var cb = '__itunes_cb' + Date.now() + Math.floor(Math.random() * 1e4);
+      var tag = document.createElement('script');
+      var timer = setTimeout(function () { done(new Error('連線逾時')); }, timeout || 12000);
+      function done(err, data) {
+        clearTimeout(timer);
+        delete window[cb];
+        tag.remove();
+        if (err) reject(err); else resolve(data);
+      }
+      window[cb] = function (d) { done(null, d); };
+      tag.onerror = function () { done(new Error('無法連到 iTunes')); };
+      tag.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'callback=' + cb;
+      document.head.appendChild(tag);
+    });
+  }
+  async function searchItunes(q) {
+    var params = new URLSearchParams({
+      term: [q.artist, q.title, q.album].filter(Boolean).join(' '), media: 'music', entity: 'song', limit: '25', country: state.country
+    });
+    var json = await jsonp('https://itunes.apple.com/search?' + params);
+    return Sources.rankByAlbum(Sources.mapItunes(json), q.album);
+  }
+  async function searchMB(q) {
+    var params = new URLSearchParams({ query: Sources.mbQuery(q.title, q.artist, q.album), fmt: 'json', limit: '10' });
+    var r = await mbFetch('https://musicbrainz.org/ws/2/recording?' + params);
+    if (r.status === 503) throw new Error('MusicBrainz 要求放慢速度，請隔幾秒再搜尋');
+    if (!r.ok) throw new Error('MusicBrainz 回應 ' + r.status);
+    return Sources.rankByAlbum(Sources.mapMB(await r.json()), q.album);
+  }
+  async function runSearch(f) {
+    var q = { title: f.q.title.trim(), artist: f.q.artist.trim(), album: f.q.album.trim() };
+    if (!q.title && !q.artist && !q.album) { setStatus(f, '請輸入歌名、歌手或專輯', true); return; }
+    var btn = $('#sform button[type=submit]');
+    btn.disabled = true;
+    setStatus(f, state.source === 'mb' ? '搜尋 MusicBrainz 中（每秒最多一次請求）…' : '搜尋 iTunes 中…');
+    try {
+      f.results = state.source === 'mb' ? await searchMB(q) : await searchItunes(q);
+      setStatus(f, f.results.length ? '找到 ' + f.results.length + ' 筆，挑出正確的版本按「套用」' : '沒有找到結果。試試只輸入歌名，或換另一個來源。');
+    } catch (err) {
+      f.results = [];
+      setStatus(f, '搜尋失敗：' + err.message + '。請確認網路連線，或換另一個來源再試。', true);
+    }
+    if (cur() === f) { renderResults(f); btn.disabled = false; }
+  }
+
+  async function fetchCover(url) {
+    var res = await fetch(url);
+    if (!res.ok) throw new Error(res.status === 404 ? '此版本沒有封面' : '封面回應 ' + res.status);
+    var blob = await res.blob();
+    if (blob.type.indexOf('image/') !== 0) throw new Error('封面格式不明');
+    return { mime: blob.type, data: new Uint8Array(await blob.arrayBuffer()) };
+  }
+
+  async function applyResult(f, r, btn) {
+    if (!r) return;
+    btn.disabled = true; btn.textContent = '套用中…';
+    ['title', 'artist', 'album', 'albumArtist', 'year', 'track', 'genre'].forEach(function (k) {
+      if (r[k]) f.edit[k] = r[k];
+    });
+    var note = '';
+    if (r.coverUrl) {
+      try {
+        f.edit.cover = await fetchCover(r.coverUrl);
+      } catch (err) {
+        note = '（封面沒有更新：' + err.message + '）';
+      }
+    }
+    f.downloaded = false;
+    f.status = '已套用「' + r.title + '」' + note + '。確認橘色標示的欄位後下載。';
+    f.statusErr = false;
+    renderList();
+    if (cur() === f) renderBench();
+  }
+
+  /* ---------- whole album ---------- */
+  function autoMatch(alb) {
+    var m = Sources.matchTracks(state.files.map(function (x) {
+      return { title: x.edit.title || x.q.title, name: x.file.name, no: Sources.trackNoFrom(x.edit.track || x.orig.track, x.file.name) };
+    }), alb.tracks);
+    alb.map = {};
+    state.files.forEach(function (x, i) { alb.map[x.id] = m[i]; });
+  }
+
+  async function openAlbum(r, btn) {
+    if (!r) return;
+    var f = cur();
+    btn.disabled = true;
+    setStatus(f, '讀取專輯曲目中…');
+    try {
+      var info;
+      if (r.source === 'iTunes') {
+        var p = new URLSearchParams({ id: r.collectionId, entity: 'song', country: state.country });
+        info = Sources.mapItunesAlbum(await jsonp('https://itunes.apple.com/lookup?' + p));
+      } else {
+        var rr = await mbFetch('https://musicbrainz.org/ws/2/release/' + encodeURIComponent(r.releaseId) + '?inc=recordings+artist-credits&fmt=json');
+        if (rr.status === 503) throw new Error('MusicBrainz 要求放慢速度，請隔幾秒再試');
+        if (!rr.ok) throw new Error('MusicBrainz 回應 ' + rr.status);
+        info = Sources.mapMBAlbum(await rr.json());
+      }
+      if (!info.tracks.length) throw new Error('這張專輯沒有曲目資料');
+      info.thumb = r.thumb;
+      info.overwrite = true;
+      autoMatch(info);
+      state.album = info;
+      setStatus(f, '已讀取專輯「' + info.album + '」，請在下方確認每個檔案對應的曲目。');
+      renderAlbum();
+      var el = $('#albumPanel');
+      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (err) {
+      setStatus(f, '讀取專輯失敗：' + err.message, true);
+    }
+    btn.disabled = false;
+  }
+
+  function renderAlbum() {
+    var box = $('#albumPanel');
+    if (!box) return;
+    var a = state.album;
+    if (!a) { box.innerHTML = ''; return; }
+    var opts = a.tracks.map(function (t, i) {
+      var disc = a.tracks.some(function (x) { return x.disc > 1; }) ? 'CD' + t.disc + ' ' : '';
+      return { i: i, label: disc + (t.no || i + 1) + '. ' + t.title };
+    });
+    var matched = 0;
+    var rows = state.files.map(function (x) {
+      var cur = a.map[x.id] == null ? -1 : a.map[x.id];
+      if (cur >= 0) matched++;
+      var o = '<option value="-1"' + (cur === -1 ? ' selected' : '') + '>（不套用）</option>' + opts.map(function (t) {
+        return '<option value="' + t.i + '"' + (cur === t.i ? ' selected' : '') + '>' + esc(t.label) + '</option>';
+      }).join('');
+      return '<div class="albrow' + (cur === -1 && a.overwrite ? ' miss' : '') + '"><span class="fn">' + esc(x.file.name) + '</span>' +
+        '<select data-m="' + x.id + '" aria-label="' + esc(x.file.name) + ' 對應的曲目"' + (a.overwrite ? '' : ' disabled') + '>' + o + '</select></div>';
+    }).join('');
+    var n = a.overwrite ? matched : state.files.length;
+    box.innerHTML = '<div class="panel alb"><h3>整張專輯套用<button class="btn sm" data-act="albClose">關閉</button></h3>' +
+      '<div class="albhead">' + (a.thumb ? '<img alt="" src="' + esc(a.thumb) + '" onerror="this.style.visibility=\'hidden\'">' : '<div class="ph"></div>') +
+        '<div><b>' + esc(a.album) + '</b><span>' + esc([a.albumArtist, a.year, a.tracks.length + ' 首'].filter(Boolean).join(' · ')) + '</span></div></div>' +
+      '<label class="albopt"><input type="checkbox" id="albOverwrite"' + (a.overwrite ? ' checked' : '') + '><span>依曲目配對，連歌名、歌手、曲號一起套用。取消勾選則只套用專輯、專輯歌手、年份、類型和封面，每個檔案原本的歌名和曲號不變。</span></label>' +
+      '<div class="albrows">' + rows + '</div>' +
+      '<div class="actions"><button class="btn primary" data-act="albApply"' + (n ? '' : ' disabled') + '>套用到 ' + n + ' 個檔案</button></div></div>';
+  }
+
+  async function applyAlbum(btn) {
+    var a = state.album;
+    if (!a) return;
+    btn.disabled = true; btn.textContent = '套用中…';
+    var cover = null, note = '';
+    if (a.coverUrl) {
+      try { cover = await fetchCover(a.coverUrl); } catch (err) { note = '（封面沒有更新：' + err.message + '）'; }
+    }
+    var n = 0;
+    state.files.forEach(function (x) {
+      var idx = a.map[x.id] == null ? -1 : a.map[x.id];
+      if (a.overwrite && idx < 0) return;
+      var t = a.overwrite ? a.tracks[idx] : null;
+      if (t) {
+        if (t.title) x.edit.title = t.title;
+        if (t.artist) x.edit.artist = t.artist;
+        if (t.track) x.edit.track = t.track;
+      }
+      if (a.album) x.edit.album = a.album;
+      if (a.albumArtist) x.edit.albumArtist = a.albumArtist;
+      if (a.year) x.edit.year = a.year;
+      if (a.genre) x.edit.genre = a.genre;
+      if (cover) x.edit.cover = cover;
+      x.downloaded = false;
+      n++;
+    });
+    state.album = null;
+    renderList(); renderBench();
+    var f = cur();
+    if (f) setStatus(f, '已套用專輯到 ' + n + ' 個檔案' + note + '。逐一點選檔案確認後，可用左側「下載全部已修改的檔案」。');
+    toast('已套用專輯到 ' + n + ' 個檔案' + note);
+  }
+
+  /* ---------- download ---------- */
+  function safeName(s) { return s.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim(); }
+  async function download(f, btn) {
+    if (btn) { btn.disabled = true; }
+    try {
+      var buf = await f.file.arrayBuffer();
+      var out = ID3.write(buf, f.edit, { stripV1: $('#stripV1').checked });
+      var name = f.file.name;
+      if ($('#rename').checked && f.edit.title) name = safeName((f.edit.artist ? f.edit.artist + ' - ' : '') + f.edit.title) + '.mp3';
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([out], { type: 'audio/mpeg' }));
+      a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 15000);
+      f.downloaded = true;
+      renderList();
+    } catch (err) {
+      toast('寫入失敗：' + err.message);
+    }
+    if (btn) btn.disabled = false;
+  }
+  dlAllBtn.addEventListener('click', async function () {
+    var todo = state.files.filter(function (f) { return isDirty(f) && !f.downloaded; });
+    dlAllBtn.disabled = true;
+    for (var i = 0; i < todo.length; i++) { await download(todo[i]); await sleep(400); }
+    toast('已下載 ' + todo.length + ' 個檔案；若瀏覽器詢問是否允許多檔下載，請選允許');
+  });
+
+  renderList();
+  renderBench();
+})();
+</script>
+</body>
+</html>

@@ -164,7 +164,25 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
 .res .t b { font-weight: 500; display: block; overflow-wrap: anywhere; }
 .res .t span { display: block; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .res .t .src { font: 400 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
-@media (max-width: 480px) { .res { grid-template-columns: 52px minmax(0, 1fr); } .res .btn { grid-column: 2; justify-self: start; } }
+.rbtns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 480px) { .res { grid-template-columns: 52px minmax(0, 1fr); } .rbtns { grid-column: 2; justify-content: flex-start; } }
+
+/* album batch panel */
+.alb { border-color: var(--accent); }
+.alb h3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.albhead { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 14px; align-items: center; margin-bottom: 14px; }
+.albhead img, .albhead .ph { width: 64px; height: 64px; border-radius: 4px; object-fit: cover; background: var(--sunken); display: block; }
+.albhead b { display: block; font-weight: 700; overflow-wrap: anywhere; }
+.albhead span { display: block; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.albopt { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; margin-bottom: 12px; cursor: pointer; }
+.albopt input { margin-top: 5px; accent-color: var(--accent); }
+.albrows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.albrow { display: grid; gap: 4px 12px; grid-template-columns: minmax(0, 1fr); padding-top: 8px; border-top: 1px solid var(--line); }
+@media (min-width: 640px) { .albrow { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); align-items: center; } }
+.albrow .fn { font-size: 13.5px; overflow-wrap: anywhere; }
+.albrow select { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); }
+.albrow select:disabled { opacity: .5; }
+.albrow.miss select { border-color: var(--changed); }
 
 .actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
 
@@ -502,6 +520,7 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
           year: year(r.releaseDate),
           track: r.trackNumber ? r.trackNumber + (r.trackCount ? '/' + r.trackCount : '') : '',
           genre: r.primaryGenreName || '',
+          collectionId: r.collectionId || '',
           thumb: art.replace(/\d+x\d+bb/, '120x120bb'),
           coverUrl: art.replace(/\d+x\d+bb/, '600x600bb')
         };
@@ -531,6 +550,7 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
           year: year(rel.date || rec['first-release-date']),
           track: num ? num + (total ? '/' + total : '') : '',
           genre: '',
+          releaseId: rel.id,
           thumb: 'https://coverartarchive.org/release/' + rel.id + '/front-250',
           coverUrl: 'https://coverartarchive.org/release/' + rel.id + '/front-500',
           official: rel.status === 'Official' ? 0 : 1
@@ -562,6 +582,92 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
       .map(function (x) { return x.r; });
   }
 
+
+  // iTunes lookup?id=<collectionId>&entity=song -> album info + track list
+  function mapItunesAlbum(json) {
+    var res = (json && json.results) || [];
+    var col = res.filter(function (x) { return x.wrapperType === 'collection'; })[0] || {};
+    var trk = res.filter(function (x) { return x.trackName; });
+    trk.sort(function (a, b) { return (a.discNumber || 1) - (b.discNumber || 1) || (a.trackNumber || 0) - (b.trackNumber || 0); });
+    var art = col.artworkUrl100 || (trk[0] && trk[0].artworkUrl100) || '';
+    return {
+      album: col.collectionName || (trk[0] && trk[0].collectionName) || '',
+      albumArtist: col.artistName || '',
+      year: year(col.releaseDate || (trk[0] && trk[0].releaseDate)),
+      genre: col.primaryGenreName || (trk[0] && trk[0].primaryGenreName) || '',
+      coverUrl: art.replace(/\d+x\d+bb/, '600x600bb'),
+      tracks: trk.map(function (t, i) {
+        return {
+          title: t.trackName, artist: t.artistName || '', no: t.trackNumber || i + 1,
+          track: t.trackNumber ? t.trackNumber + (t.trackCount ? '/' + t.trackCount : '') : '',
+          disc: t.discNumber || 1
+        };
+      })
+    };
+  }
+
+  // MusicBrainz release?inc=recordings+artist-credits -> album info + track list
+  function mapMBAlbum(json) {
+    var tracks = [];
+    ((json && json.media) || []).forEach(function (m, mi) {
+      (m.tracks || []).forEach(function (t) {
+        var rec = t.recording || {};
+        var pos = t.position || 0;
+        tracks.push({
+          title: t.title || rec.title || '',
+          artist: credit(t['artist-credit']) || credit(rec['artist-credit']),
+          no: pos,
+          track: pos ? pos + '/' + (m['track-count'] || (m.tracks || []).length) : '',
+          disc: m.position || mi + 1
+        });
+      });
+    });
+    return {
+      album: (json && json.title) || '',
+      albumArtist: credit(json && json['artist-credit']),
+      year: year(json && json.date),
+      genre: '',
+      coverUrl: json && json.id ? 'https://coverartarchive.org/release/' + json.id + '/front-500' : '',
+      tracks: tracks
+    };
+  }
+
+  function norm(s) {
+    return String(s || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  }
+  // Track number from "3", "3/12", or a leading number in a file name ("03 - Title.mp3")
+  function trackNoFrom(tag, fileName) {
+    var m = String(tag || '').match(/^\s*(\d{1,3})/);
+    if (m) return +m[1];
+    m = String(fileName || '').match(/^\s*(\d{1,3})(?=[\s.\-)_])/);
+    return m ? +m[1] : null;
+  }
+
+  // files: [{ title, name, no }]   tracks: [{ title, no }]  ->  array (per file) of track index or -1
+  // Title match wins over file-name match, which wins over track number alone. One track per file.
+  function matchTracks(files, tracks) {
+    var pairs = [];
+    files.forEach(function (f, fi) {
+      var ft = norm(f.title), fn = norm(String(f.name || '').replace(/\.[^.]+$/, ''));
+      tracks.forEach(function (t, ti) {
+        var tt = norm(t.title), sc = 0;
+        if (tt) {
+          if (ft && ft === tt) sc = 10;
+          else if (ft && ft.length >= 2 && tt.length >= 2 && (ft.indexOf(tt) >= 0 || tt.indexOf(ft) >= 0)) sc = 6;
+          else if (tt.length >= 2 && fn.indexOf(tt) >= 0) sc = 5;
+        }
+        if (f.no != null && t.no === f.no) sc = sc ? sc + 1 : 2;
+        if (sc) pairs.push({ fi: fi, ti: ti, sc: sc });
+      });
+    });
+    pairs.sort(function (a, b) { return b.sc - a.sc || a.fi - b.fi || a.ti - b.ti; });
+    var out = files.map(function () { return -1; }), used = {};
+    pairs.forEach(function (p) {
+      if (out[p.fi] === -1 && !used[p.ti]) { out[p.fi] = p.ti; used[p.ti] = true; }
+    });
+    return out;
+  }
+
   // "Artist - Title.mp3" -> { artist, title }
   function guessFromName(name) {
     var base = name.replace(/\.[^.]+$/, '').replace(/_/g, ' ').replace(/^\s*\d{1,3}[\s.\-)]+(?=\D)/, '').trim();
@@ -570,7 +676,10 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
     return { artist: '', title: base };
   }
 
-  var api = { mapItunes: mapItunes, mapMB: mapMB, mbQuery: mbQuery, rankByAlbum: rankByAlbum, guessFromName: guessFromName };
+  var api = {
+    mapItunes: mapItunes, mapMB: mapMB, mbQuery: mbQuery, rankByAlbum: rankByAlbum, guessFromName: guessFromName,
+    mapItunesAlbum: mapItunesAlbum, mapMBAlbum: mapMBAlbum, matchTracks: matchTracks, trackNoFrom: trackNoFrom
+  };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Sources = api;
 })(typeof self !== 'undefined' ? self : this);
@@ -585,7 +694,7 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
   ];
   var COUNTRIES = [['TW', '台灣'], ['US', '美國'], ['JP', '日本'], ['HK', '香港'], ['KR', '韓國'], ['CN', '中國']];
 
-  var state = { files: [], sel: null, source: 'itunes', country: 'TW' };
+  var state = { files: [], sel: null, source: 'itunes', country: 'TW', album: null };
   var uid = 0;
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var listEl = $('#list'), benchEl = $('#bench'), dlAllBtn = $('#dlAll');
@@ -702,6 +811,7 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
     '<li>把 mp3 拖進左邊的框，可以一次放很多首。</li>' +
     '<li>確認歌名、歌手，需要時再填專輯名稱縮小範圍（沒有標籤時會從檔名猜，例如「周杰倫 - 晴天.mp3」），按搜尋，從結果挑出正確的版本。</li>' +
     '<li>檢查橘色標示的修改處，下載修正後的檔案。原始檔案不會被改動。</li></ol>' +
+    '<p>同一張專輯的歌：一次拉進所有檔案，搜尋後按結果旁的「整張專輯」，工具會把曲目表自動配對到每個檔案，你確認後一次套用。</p>' +
     '<p>搜尋來源是 iTunes（封面品質好、有類型）和 MusicBrainz（社群資料庫、版本很多）。同一首歌在兩邊結果不同時，兩個都試試看。</p></div>';
 
   function fieldHTML(f, x) {
@@ -746,10 +856,12 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
             '<button class="btn primary" type="submit">搜尋</button></div></form>' +
         '<p class="status' + (f.statusErr ? ' err' : '') + '" id="status">' + esc(f.status) + '</p>' +
         '<ul class="results" id="results"></ul></div>' +
+      '<div id="albumPanel"></div>' +
       '<div class="actions"><button class="btn" data-act="reset">還原原本標籤</button>' +
         '<button class="btn primary" data-act="download">下載修正後的檔案</button></div>';
 
     renderResults(f);
+    renderAlbum();
     var im = $('#coverImg');
     if (im) im.addEventListener('load', function () {
       $('#cmeta').textContent = im.naturalWidth + ' × ' + im.naturalHeight + ' · ' + fmtSize(f.edit.cover.data.length);
@@ -763,7 +875,8 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
       var sub = [r.album, r.year, r.track && '曲 ' + r.track, r.genre].filter(Boolean).join(' · ');
       return '<li class="res"><img loading="lazy" alt="" src="' + esc(r.thumb) + '" onerror="this.style.visibility=\'hidden\'">' +
         '<div class="t"><b>' + esc(r.title) + '</b><span>' + esc(r.artist) + '</span><span>' + esc(sub) + '</span><span class="src">' + esc(r.source) + '</span></div>' +
-        '<button class="btn sm" data-apply="' + i + '">套用</button></li>';
+        '<div class="rbtns"><button class="btn sm" data-apply="' + i + '">套用</button>' +
+        (state.files.length > 1 && (r.collectionId || r.releaseId) ? '<button class="btn sm" data-album="' + i + '" title="把這張專輯套用到所有已加入的檔案">整張專輯</button>' : '') + '</div></li>';
     }).join('');
   }
   function setStatus(f, msg, err) {
@@ -792,6 +905,8 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
       state.source = e.target.value;
       $('#country').hidden = state.source !== 'itunes';
     } else if (e.target.id === 'country') state.country = e.target.value;
+    else if (e.target.id === 'albOverwrite' && state.album) { state.album.overwrite = e.target.checked; renderAlbum(); }
+    else if (e.target.dataset && e.target.dataset.m && state.album) { state.album.map[e.target.dataset.m] = +e.target.value; renderAlbum(); }
   });
   benchEl.addEventListener('submit', function (e) {
     e.preventDefault();
@@ -803,6 +918,8 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
     if (!f) return;
     var ap = e.target.closest('[data-apply]');
     if (ap) { applyResult(f, f.results[+ap.dataset.apply], ap); return; }
+    var al = e.target.closest('[data-album]');
+    if (al) { openAlbum(f.results[+al.dataset.album], al); return; }
     var act = e.target.closest('[data-act]');
     if (!act) return;
     var a = act.dataset.act;
@@ -811,6 +928,8 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
     else if (a === 'reset') { f.edit = Object.assign({}, f.orig); f.downloaded = false; renderList(); renderBench(); }
     else if (a === 'repair') repair(f, $('#mojiEnc').value);
     else if (a === 'download') download(f, act);
+    else if (a === 'albApply') applyAlbum(act);
+    else if (a === 'albClose') { state.album = null; renderAlbum(); }
   });
 
   function repair(f, enc) {
@@ -887,6 +1006,14 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
     if (cur() === f) { renderResults(f); btn.disabled = false; }
   }
 
+  async function fetchCover(url) {
+    var res = await fetch(url);
+    if (!res.ok) throw new Error(res.status === 404 ? '此版本沒有封面' : '封面回應 ' + res.status);
+    var blob = await res.blob();
+    if (blob.type.indexOf('image/') !== 0) throw new Error('封面格式不明');
+    return { mime: blob.type, data: new Uint8Array(await blob.arrayBuffer()) };
+  }
+
   async function applyResult(f, r, btn) {
     if (!r) return;
     btn.disabled = true; btn.textContent = '套用中…';
@@ -896,11 +1023,7 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
     var note = '';
     if (r.coverUrl) {
       try {
-        var res = await fetch(r.coverUrl);
-        if (!res.ok) throw new Error(res.status === 404 ? '此版本沒有封面' : '封面回應 ' + res.status);
-        var blob = await res.blob();
-        if (blob.type.indexOf('image/') !== 0) throw new Error('封面格式不明');
-        f.edit.cover = { mime: blob.type, data: new Uint8Array(await blob.arrayBuffer()) };
+        f.edit.cover = await fetchCover(r.coverUrl);
       } catch (err) {
         note = '（封面沒有更新：' + err.message + '）';
       }
@@ -910,6 +1033,107 @@ details.moji select { padding: 5px 8px; border: 1px solid var(--line); border-ra
     f.statusErr = false;
     renderList();
     if (cur() === f) renderBench();
+  }
+
+  /* ---------- whole album ---------- */
+  function autoMatch(alb) {
+    var m = Sources.matchTracks(state.files.map(function (x) {
+      return { title: x.edit.title || x.q.title, name: x.file.name, no: Sources.trackNoFrom(x.edit.track || x.orig.track, x.file.name) };
+    }), alb.tracks);
+    alb.map = {};
+    state.files.forEach(function (x, i) { alb.map[x.id] = m[i]; });
+  }
+
+  async function openAlbum(r, btn) {
+    if (!r) return;
+    var f = cur();
+    btn.disabled = true;
+    setStatus(f, '讀取專輯曲目中…');
+    try {
+      var info;
+      if (r.source === 'iTunes') {
+        var p = new URLSearchParams({ id: r.collectionId, entity: 'song', country: state.country });
+        info = Sources.mapItunesAlbum(await jsonp('https://itunes.apple.com/lookup?' + p));
+      } else {
+        var rr = await mbFetch('https://musicbrainz.org/ws/2/release/' + encodeURIComponent(r.releaseId) + '?inc=recordings+artist-credits&fmt=json');
+        if (rr.status === 503) throw new Error('MusicBrainz 要求放慢速度，請隔幾秒再試');
+        if (!rr.ok) throw new Error('MusicBrainz 回應 ' + rr.status);
+        info = Sources.mapMBAlbum(await rr.json());
+      }
+      if (!info.tracks.length) throw new Error('這張專輯沒有曲目資料');
+      info.thumb = r.thumb;
+      info.overwrite = true;
+      autoMatch(info);
+      state.album = info;
+      setStatus(f, '已讀取專輯「' + info.album + '」，請在下方確認每個檔案對應的曲目。');
+      renderAlbum();
+      var el = $('#albumPanel');
+      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (err) {
+      setStatus(f, '讀取專輯失敗：' + err.message, true);
+    }
+    btn.disabled = false;
+  }
+
+  function renderAlbum() {
+    var box = $('#albumPanel');
+    if (!box) return;
+    var a = state.album;
+    if (!a) { box.innerHTML = ''; return; }
+    var opts = a.tracks.map(function (t, i) {
+      var disc = a.tracks.some(function (x) { return x.disc > 1; }) ? 'CD' + t.disc + ' ' : '';
+      return { i: i, label: disc + (t.no || i + 1) + '. ' + t.title };
+    });
+    var matched = 0;
+    var rows = state.files.map(function (x) {
+      var cur = a.map[x.id] == null ? -1 : a.map[x.id];
+      if (cur >= 0) matched++;
+      var o = '<option value="-1"' + (cur === -1 ? ' selected' : '') + '>（不套用）</option>' + opts.map(function (t) {
+        return '<option value="' + t.i + '"' + (cur === t.i ? ' selected' : '') + '>' + esc(t.label) + '</option>';
+      }).join('');
+      return '<div class="albrow' + (cur === -1 && a.overwrite ? ' miss' : '') + '"><span class="fn">' + esc(x.file.name) + '</span>' +
+        '<select data-m="' + x.id + '" aria-label="' + esc(x.file.name) + ' 對應的曲目"' + (a.overwrite ? '' : ' disabled') + '>' + o + '</select></div>';
+    }).join('');
+    var n = a.overwrite ? matched : state.files.length;
+    box.innerHTML = '<div class="panel alb"><h3>整張專輯套用<button class="btn sm" data-act="albClose">關閉</button></h3>' +
+      '<div class="albhead">' + (a.thumb ? '<img alt="" src="' + esc(a.thumb) + '" onerror="this.style.visibility=\'hidden\'">' : '<div class="ph"></div>') +
+        '<div><b>' + esc(a.album) + '</b><span>' + esc([a.albumArtist, a.year, a.tracks.length + ' 首'].filter(Boolean).join(' · ')) + '</span></div></div>' +
+      '<label class="albopt"><input type="checkbox" id="albOverwrite"' + (a.overwrite ? ' checked' : '') + '><span>依曲目配對，連歌名、歌手、曲號一起套用。取消勾選則只套用專輯、專輯歌手、年份、類型和封面，每個檔案原本的歌名和曲號不變。</span></label>' +
+      '<div class="albrows">' + rows + '</div>' +
+      '<div class="actions"><button class="btn primary" data-act="albApply"' + (n ? '' : ' disabled') + '>套用到 ' + n + ' 個檔案</button></div></div>';
+  }
+
+  async function applyAlbum(btn) {
+    var a = state.album;
+    if (!a) return;
+    btn.disabled = true; btn.textContent = '套用中…';
+    var cover = null, note = '';
+    if (a.coverUrl) {
+      try { cover = await fetchCover(a.coverUrl); } catch (err) { note = '（封面沒有更新：' + err.message + '）'; }
+    }
+    var n = 0;
+    state.files.forEach(function (x) {
+      var idx = a.map[x.id] == null ? -1 : a.map[x.id];
+      if (a.overwrite && idx < 0) return;
+      var t = a.overwrite ? a.tracks[idx] : null;
+      if (t) {
+        if (t.title) x.edit.title = t.title;
+        if (t.artist) x.edit.artist = t.artist;
+        if (t.track) x.edit.track = t.track;
+      }
+      if (a.album) x.edit.album = a.album;
+      if (a.albumArtist) x.edit.albumArtist = a.albumArtist;
+      if (a.year) x.edit.year = a.year;
+      if (a.genre) x.edit.genre = a.genre;
+      if (cover) x.edit.cover = cover;
+      x.downloaded = false;
+      n++;
+    });
+    state.album = null;
+    renderList(); renderBench();
+    var f = cur();
+    if (f) setStatus(f, '已套用專輯到 ' + n + ' 個檔案' + note + '。逐一點選檔案確認後，可用左側「下載全部已修改的檔案」。');
+    toast('已套用專輯到 ' + n + ' 個檔案' + note);
   }
 
   /* ---------- download ---------- */
